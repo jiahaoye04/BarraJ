@@ -9,6 +9,7 @@ Una barra fina de color en el borde inferior de la pantalla que se va llenando a
    - **Hora de inicio**: a qué hora has empezado. Puedes escribir `9` o `9:30`.
    - **Trabajo efectivo**: cuántas horas quieres trabajar hoy. `8` o `8:30`.
    - **Colores** (opcional): un color para trabajo y otro para descanso.
+   - El resto de opciones (cómo avanza la barra, brillo, visibilidad) tienen valores por defecto que ya van bien; los explican las secciones de abajo.
 3. Pulsa **Aceptar**. La barra aparece abajo y empieza a llenarse.
 
 Y ya está. No hay nada más que hacer durante el día.
@@ -52,6 +53,17 @@ En la ventana de configuración eliges entre dos formas de trabajar:
 
 Puedes cambiar de modo cuando quieras desde *Configurar*, en el icono de la bandeja.
 
+## Cómo avanza la barra
+
+En *Configurar* eliges cómo se llena:
+
+- **Real**: avanza a ritmo constante. Una hora siempre ocupa lo mismo.
+- **Equilibrado**: avanza poco en las primeras horas y más en las últimas. Como el día "se siente" más largo al principio y más corto al final, así la barra acompaña mejor esa sensación. Con el deslizador ajustas cuánto se nota (Lineal, Suave, Media, Fuerte); por defecto viene el que mejor encaja con tus horas.
+
+## Brillo en la punta
+
+Hay una casilla **"Brillo en la punta al avanzar"**. Con ella, el extremo de la barra se ilumina un instante cada vez que avanza y se apaga enseguida. Como la barra se mueve muy despacio, es una forma de ver "de un vistazo" que sigue corriendo. Puedes apagarlo si prefieres algo más sobrio.
+
 ## Cuando termines
 
 Al completar tus horas, la pantalla se llena de emojis durante **10 segundos** y el programa se cierra solo. No molesta: puedes seguir usando el ordenador con normalidad mientras.
@@ -66,10 +78,7 @@ Al completar tus horas, la pantalla se llena de emojis durante **10 segundos** y
 ## Si algo falla
 
 **La barra se ha quedado colgada, no responde o no encuentras el icono.**
-Haz doble clic en **`cerrar_jornada.bat`**. Cierra el programa a la fuerza y te dice si lo ha conseguido. No borra nada: el progreso del día se conserva, así que puedes volver a abrir `jornada.bat` y seguir donde estabas.
+Haz doble clic en **`cerrar_jornada.bat`**. Te pide confirmación y luego cierra el programa a la fuerza y borra el progreso del día. Tu configuración (horas y colores) se conserva. Al abrir `jornada.bat` de nuevo, empiezas un día limpio.
 
 **Quieres ver el error concreto.**
 Abre `jornada.bat` con el Bloc de notas, cambia `pythonw.exe` por `python.exe` y guárdalo. Al ejecutarlo verás una ventana negra con el mensaje de error. Cuando termines, déjalo como estaba.
-
-**Quieres empezar el día de cero.**
-Usa *Terminar* desde el icono de la bandeja, o borra el archivo de progreso: pulsa `Win + R`, escribe `%APPDATA%\barra_jornada` y borra `estado.json`.

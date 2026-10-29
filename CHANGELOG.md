@@ -101,9 +101,65 @@ descansar no retrasaba la hora de salida. Modelo incorrecto para mi horario real
 
 - `jornada.bat` — lanzador con `pythonw.exe` (ruta absoluta; el alias del
   Microsoft Store tapaba el Python real en el PATH).
-- `cerrar_jornada.bat` — cierre forzado. Filtra por `CommandLine` con
-  `Get-CimInstance Win32_Process`, no mata todos los `pythonw`.
+- `cerrar_jornada.bat` — terminación forzada. Filtra por `CommandLine` con
+  `Get-CimInstance Win32_Process`, no mata todos los `pythonw`. Además borra
+  `estado.json` (no `preferencias.json`), replicando el *Terminar* de la
+  bandeja: matar el proceso a secas dejaba el estado a medias y al reabrir
+  recuperaba una jornada que ya no quería. Confirmación `choice` previa, que
+  la acción es destructiva.
 - `README.md` — instrucciones para usuario no técnico.
+
+---
+
+## 2026-10-29 — Ritmo de avance y brillo de punta
+
+### Progreso real vs. curvado
+
+- Dos modos nuevos, persistidos: `progreso = "real"` (lineal, como hasta
+  ahora) y `"curva"` (primeras horas lentas en barra, últimas rápidas, para
+  compensar la percepción del paso del tiempo).
+- La curva es `fraccion_trabajo ** exp`, aplicada **solo sobre la fracción de
+  trabajo** (no sobre el reloj: el descanso ya deforma el denominador aparte).
+  Intensidades: Lineal 1.0 / Suave 1.35 / Media 1.7 / Fuerte 2.3, elegidas con
+  un `tk.Scale` de 4 topes.
+- `curva = None` en preferencias significa "usar la recomendada por horas"
+  (`curva_recomendada`: ≤6h Suave, 6-9h Media, >9h Fuerte). Se resuelve a una
+  etiqueta concreta en el arranque vía `_resolver_curva()`.
+
+### Repintado columna a columna
+
+- **Cambio de fondo del dibujado.** Con curva, un rectángulo por tramo deja de
+  valer: la deformación no es lineal *dentro* de un tramo, así que un tramo
+  largo se curvaría por dentro y las fronteras caerían mal. `_redibujar()` pasa
+  a recorrer columnas de píxel: cada x → fracción curvada → fracción lineal
+  (inversa `fc ** (1/exp)`) → instante real → modo activo → color. Se agrupan
+  columnas contiguas del mismo color en un solo rectángulo. Validado que las
+  fronteras trabajo/descanso quedan en orden también curvadas.
+- En modo lineal (`exp == 1.0`) la inversa es la identidad; mismo resultado que
+  antes, solo que calculado por columnas. Coste despreciable a 1 refresco/s.
+
+### Brillo de la punta
+
+- Versión adoptada: degradado **dentro** de la barra, no halo saliente. Se
+  descartó el halo porque exigía una ventana más alta con color clave, lo que
+  reintroduce el `WS_EX_LAYERED`/`-transparentcolor` que ya dio repintado con
+  Eclipse. El degradado no toca el z-order.
+- Bucle propio (`_bucle_brillo`, 60 ms): compara el borde pintado con el del
+  frame anterior; si avanzó, enciende a 1.0; si no, decae por
+  `BRILLO_DECAIMIENTO` (~1 s hasta apagarse). Los últimos `BRILLO_ANCHO` px se
+  mezclan hacia blanco con `mezclar_hacia_blanco`, más intenso en la punta.
+- Opcional, persistido (`brillo`). Se omite si la barra está oculta.
+
+### Config
+
+- El diálogo crece con: radios Real/Equilibrado, deslizador de intensidad (gris
+  cuando Real), y casilla de brillo. Deslizador construido con `fila`
+  incremental para no renumerar filas a mano.
+- **Bug corregido en caliente:** `grid(sticky="center")` no es válido en Tk
+  (`sticky` solo acepta n/e/s/w); las marcas intermedias del deslizador
+  reventaban el arranque con `pythonw` (terminal que parpadea y se cierra).
+  Centrado = `sticky=""`.
+- Observado: el equipo del trabajo corre **Python 3.14**.
 
 ---
 
