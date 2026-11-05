@@ -163,6 +163,20 @@ descansar no retrasaba la hora de salida. Modelo incorrecto para mi horario real
 
 ---
 
+## 2026-11-05 — Arreglos de instalación
+
+- `jornada.bat` tenía un marcador de ruta sin rellenar y sin alternativa, así
+  que no arrancaba. Ahora sigue el mismo esquema que el lanzador de ExtractJ:
+  prueba la ruta configurada y, si no existe, usa `pythonw` del PATH.
+- `README.md`: añadida sección de requisitos (`pystray` y `pillow`). Con
+  `pythonw` un import fallido no muestra nada, así que era fácil quedarse sin
+  saber por qué no abría.
+- `README.md`: la sección *Si algo falla* explica el caso de que no arranque y
+  corrige las instrucciones para ver el error.
+- Añadido `.gitignore` para `__pycache__/`.
+
+---
+
 ## Pendiente / ideas
 
 - Al cambiar de color se recolorean también los tramos pasados. Decidido así a

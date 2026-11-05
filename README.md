@@ -2,6 +2,17 @@
 
 Una barra fina de color en el borde inferior de la pantalla que se va llenando a lo largo de tu jornada laboral.
 
+## Requisitos
+
+- Python 3 instalado en Windows.
+- Dos librerías externas, para el icono de la bandeja y los gráficos. Instálalas una vez desde una consola:
+
+  ```
+  pip install pystray pillow
+  ```
+
+Deja `barra_jornada.py`, `jornada.bat` y `cerrar_jornada.bat` en la misma carpeta.
+
 ## Cómo se usa
 
 1. Haz doble clic en `jornada.bat`.
@@ -77,8 +88,11 @@ Al completar tus horas, la pantalla se llena de emojis durante **10 segundos** y
 
 ## Si algo falla
 
+**Al hacer doble clic en `jornada.bat` no pasa nada.**
+Lo más habitual es que falten `pystray` o `pillow` (ver *Requisitos*) o que Windows no encuentre Python. En el segundo caso, edita `jornada.bat` con el Bloc de notas y pon en la línea `set "PYTHONW=..."` la ruta completa a tu `pythonw.exe`.
+
 **La barra se ha quedado colgada, no responde o no encuentras el icono.**
 Haz doble clic en **`cerrar_jornada.bat`**. Te pide confirmación y luego cierra el programa a la fuerza y borra el progreso del día. Tu configuración (horas y colores) se conserva. Al abrir `jornada.bat` de nuevo, empiezas un día limpio.
 
 **Quieres ver el error concreto.**
-Abre `jornada.bat` con el Bloc de notas, cambia `pythonw.exe` por `python.exe` y guárdalo. Al ejecutarlo verás una ventana negra con el mensaje de error. Cuando termines, déjalo como estaba.
+Abre `jornada.bat` con el Bloc de notas, cambia `pythonw` por `python` en las dos líneas donde aparece y guárdalo. Al ejecutarlo verás una ventana negra con el mensaje de error. Cuando termines, déjalo como estaba.
