@@ -1,5 +1,5 @@
 """
-Barra de jornada 2.0.0 — barra de progreso de la jornada laboral para Windows 11.
+Barra de jornada 2.1.0 — barra de progreso de la jornada laboral para Windows 11.
 
 - La barra se pinta por tramos: cada franja conserva el modo (trabajo /
   descanso) en el que estabas, con su propio estilo de color.
@@ -47,7 +47,7 @@ try:
 except ImportError:          # fuera de Windows (solo para pruebas)
     winreg = None
 
-VERSION = "2.0.0"
+VERSION = "2.1.0"
 NOMBRE_APP = "Barra de jornada"
 
 # --------------------------------------------------------------------------
@@ -86,7 +86,8 @@ PALETAS = {                          # nombre -> (color 1, color 2)
 }
 PERIODO_MOVIMIENTO = 8.0            # s que tarda el degradado en dar una vuelta
 
-VISIBILIDADES = ("siempre", "auto", "asomar")
+VISIBILIDADES = ("siempre", "auto", "asomar", "salto")
+POSICIONES_AVISO = ("cursor", "barra")
 TEMAS_APP = ("sistema", "claro", "oscuro")
 TEMAS_BARRA = ("app", "sistema", "claro", "oscuro", "ninguno")
 MODOS_BRILLO = ("continuo", "pixeles", "minutos")
@@ -131,12 +132,38 @@ SEGUNDOS_PERMANENCIA = 5.0
 ZONA_DETECCION = 3
 PASO_ANIMACION_MS = 25
 
+# Avance por saltos: preaviso y aparición
+PREAVISO_DEF = 2                    # s con la cabeza encendida antes de saltar
+RECTA_FINAL_DEF = 10                # min finales en los que se avanza sin saltos
+APARICION_PREVIA_S = 2.0            # "Aparecer con cada salto": margen antes del preaviso
+RESPIRACION_PERIODO = 0.9           # s por ciclo de "respiración" durante el preaviso
+RESPIRACION_MINIMO = 0.65           # intensidad mínima de la respiración
+ESTELA_SALTO = 1.6                  # la estela es más larga en preaviso y salto
+
 # Burbujas de aviso
-BURBUJA_SEGUNDOS = 4.5
 BURBUJA_ANCHO_TEXTO = 300
 BURBUJA_RADIO = 12
 BURBUJA_PADX, BURBUJA_PADY = 12, 8
-BURBUJA_COLA = 9
+BURBUJA_COLA = 12
+BURBUJA_MARGEN_X = 110              # holgura lateral para que la colita se incline
+BURBUJA_MARGEN_Y = BURBUJA_COLA + 10
+BURBUJA_ZONA_MUERTA = 40            # px que puede alejarse el objetivo sin mover el cuerpo
+BURBUJA_INERCIA = 0.18              # fracción de la distancia que recorre por fotograma
+BURBUJA_INERCIA_V = 0.6             # en vertical sigue casi al instante
+BURBUJA_SOBRE_CURSOR = 6            # la punta queda 6 px por encima del puntero…
+BURBUJA_BAJO_CURSOR = 24            # …o 24 px por debajo (bajo la flecha) si no cabe arriba
+INTERVALO_BURBUJA_MS = 16           # ~60 fps mientras hay burbuja
+POP_MS = 160                        # entrada con rebote: 80 % -> 105 % -> 100 %
+AVISO_SEG_BASE = 4.0                # duración automática: base + por palabra
+AVISO_SEG_PALABRA = 0.3
+AVISO_SEG_MIN, AVISO_SEG_MAX = 5.0, 10.0
+
+# Cerrar una burbuja sacudiendo el ratón (zigzag horizontal)
+ZIGZAG_CAMBIOS = 3                  # cambios de sentido necesarios…
+ZIGZAG_VENTANA_S = 1.0              # …dentro de este tiempo
+ZIGZAG_MIN_PX = 40                  # recorrido mínimo de cada tramo
+ZIGZAG_HISTERESIS_PX = 8            # retroceso mínimo para contar un cambio de sentido
+ZIGZAG_MAX_VERTICAL = 0.6           # movimiento vertical tolerado respecto al horizontal
 
 # Celebración final
 NUM_PARTICULAS = 45
@@ -161,6 +188,11 @@ RUTA_ESTADO = os.path.join(
     "estado.json",
 )
 RUTA_PREFERENCIAS = os.path.join(os.path.dirname(RUTA_ESTADO), "preferencias.json")
+
+# Diagnóstico: crea un fichero vacío "diagnostico.on" en la carpeta de datos
+# y la barra irá apuntando en "diagnostico.log" dónde coloca cada burbuja.
+RUTA_DIAGNOSTICO_ON = os.path.join(os.path.dirname(RUTA_ESTADO), "diagnostico.on")
+RUTA_DIAGNOSTICO_LOG = os.path.join(os.path.dirname(RUTA_ESTADO), "diagnostico.log")
 
 # Paletas de interfaz por tema
 TEMAS_UI = {
@@ -196,6 +228,7 @@ user32.GetWindowLongW.restype = ctypes.c_long
 kernel32.CreateMutexW.restype = wintypes.HANDLE
 kernel32.GetTickCount.restype = wintypes.DWORD
 user32.FindWindowExW.restype = wintypes.HWND
+user32.MonitorFromPoint.restype = wintypes.HMONITOR
 user32.FindWindowExW.argtypes = [wintypes.HWND, wintypes.HWND, wintypes.LPCWSTR, wintypes.LPCWSTR]
 
 GWL_EXSTYLE = -20
@@ -283,6 +316,82 @@ def _posicion_cursor() -> tuple[int, int]:
     p = POINT()
     user32.GetCursorPos(ctypes.byref(p))
     return p.x, p.y
+
+
+class MONITORINFO(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", wintypes.DWORD),
+        ("rcMonitor", wintypes.RECT),
+        ("rcWork", wintypes.RECT),
+        ("dwFlags", wintypes.DWORD),
+    ]
+
+
+MONITOR_DEFAULTTONEAREST = 2
+
+
+def area_monitor(x: int, y: int) -> tuple[int, int, int, int]:
+    """Área de trabajo (izq, arriba, der, abajo) del monitor que contiene (x, y)."""
+    info = MONITORINFO()
+    info.cbSize = ctypes.sizeof(MONITORINFO)
+    try:
+        hmon = user32.MonitorFromPoint(POINT(x, y), MONITOR_DEFAULTTONEAREST)
+        if hmon and user32.GetMonitorInfoW(hmon, ctypes.byref(info)):
+            r = info.rcWork
+            if r.right > r.left and r.bottom > r.top:
+                return r.left, r.top, r.right, r.bottom
+    except (AttributeError, OSError, ctypes.ArgumentError):
+        pass
+    r = _area_trabajo()
+    return r.left, r.top, r.right, r.bottom
+
+
+def rect_ventana(hwnd: int) -> tuple[int, int, int, int] | None:
+    """Rectángulo real de una ventana en pantalla, según Windows."""
+    rect = wintypes.RECT()
+    try:
+        if user32.GetWindowRect(hwnd, ctypes.byref(rect)) and rect.right > rect.left:
+            return rect.left, rect.top, rect.right, rect.bottom
+    except (AttributeError, OSError, ctypes.ArgumentError):
+        pass
+    return None
+
+
+MODO_DPI = "sin activar"
+
+
+def activar_dpi_por_monitor() -> str:
+    """
+    Declara el proceso compatible con DPI por monitor (v2) ANTES de crear
+    ventanas. Así Windows no reescala la barra a mapa de bits y todas las
+    coordenadas (Tk, cursor, área de trabajo) son píxeles reales.
+    """
+    global MODO_DPI
+    try:
+        if user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4)):
+            MODO_DPI = "por monitor v2"
+            return MODO_DPI
+    except (AttributeError, OSError):
+        pass
+    try:
+        if ctypes.windll.shcore.SetProcessDpiAwareness(2) == 0:
+            MODO_DPI = "por monitor"
+            return MODO_DPI
+    except (AttributeError, OSError):
+        pass
+    try:
+        if user32.SetProcessDPIAware():
+            MODO_DPI = "sistema"
+    except (AttributeError, OSError):
+        pass
+    return MODO_DPI
+
+
+def dpi_ventana(hwnd: int) -> int:
+    try:
+        return int(user32.GetDpiForWindow(hwnd)) or 96
+    except (AttributeError, OSError):
+        return 96
 
 
 def segundos_inactivo() -> float:
@@ -537,6 +646,37 @@ def envolvente_brillo(s: float, base: float = 0.0, mantener: float = BRILLO_MANT
 DURACION_PULSO = BRILLO_ATAQUE + BRILLO_MANTENER + BRILLO_CAIDA
 
 
+def respiracion(s: float, preaviso: float) -> float:
+    """
+    Factor que hace 'respirar' la cabeza blanca durante el preaviso, para que
+    se note de reojo antes de que la barra salte. 1 fuera del preaviso.
+    """
+    if preaviso <= 0 or s <= BRILLO_ATAQUE or s >= preaviso:
+        return 1.0
+    fase = 2 * math.pi * (s - BRILLO_ATAQUE) / RESPIRACION_PERIODO
+    medio = (1.0 + RESPIRACION_MINIMO) / 2
+    return medio + (1.0 - medio) * math.cos(fase)
+
+
+def duracion_aviso(texto: str, segundos_fijos: int = 0) -> float:
+    """Automática: 4 s + 0,3 s por palabra, entre 5 y 10 s. O un valor fijo."""
+    if segundos_fijos > 0:
+        return float(segundos_fijos)
+    palabras = len(texto.split())
+    return max(AVISO_SEG_MIN, min(AVISO_SEG_MAX, AVISO_SEG_BASE + AVISO_SEG_PALABRA * palabras))
+
+
+def escala_pop(t: float) -> float:
+    """Escala de entrada con rebote: 0,8 -> 1,05 (al 60 %) -> 1,0."""
+    if t >= 1.0:
+        return 1.0
+    if t <= 0.0:
+        return 0.8
+    if t < 0.6:
+        return 0.8 + 0.25 * math.sin(math.pi / 2 * t / 0.6)
+    return 1.05 - 0.05 * math.sin(math.pi / 2 * (t - 0.6) / 0.4)
+
+
 def duracion_salto(acumulado_s: float) -> float:
     """Segundos que tarda la punta en soltar `acumulado_s` de avance retenido."""
     t = SALTO_BASE_S * math.sqrt(max(0.0, acumulado_s) / SALTO_REF_S)
@@ -575,6 +715,10 @@ def config_por_defecto() -> dict:
         "brillo_min_min": 5,
         "brillo_min_max": 5,
         "saltos": False,
+        "preaviso_s": PREAVISO_DEF,
+        "recta_final_min": RECTA_FINAL_DEF,
+        "aviso_posicion": "cursor",
+        "aviso_segundos": 0,                # 0 = automática según el texto
         "tema_app": "sistema",
         "tema_barra": "app",
         "atenuacion": 15,
@@ -673,6 +817,10 @@ def normalizar_config(datos, base: dict | None = None) -> dict:
     c["brillo"] = bool(d.get("brillo", base["brillo"]))
     c["brillo_modo"] = _opcion(d.get("brillo_modo"), MODOS_BRILLO, base["brillo_modo"])
     c["saltos"] = bool(d.get("saltos", base["saltos"]))
+    c["preaviso_s"] = _entero(d.get("preaviso_s"), 0, 5, base["preaviso_s"])
+    c["recta_final_min"] = _entero(d.get("recta_final_min"), 0, 120, base["recta_final_min"])
+    c["aviso_posicion"] = _opcion(d.get("aviso_posicion"), POSICIONES_AVISO, base["aviso_posicion"])
+    c["aviso_segundos"] = _entero(d.get("aviso_segundos"), 0, 60, base["aviso_segundos"])
     for clave, maximo in (
         ("brillo_px_min", 2000), ("brillo_px_max", 2000),
         ("brillo_min_min", 240), ("brillo_min_max", 240),
@@ -838,6 +986,7 @@ class PintorBarra:
         brillo: float,
         px_borde: int,
         marcas: list,
+        estela: int = BRILLO_ANCHO,
     ) -> Image.Image:
         fila = Image.new("RGB", (ancho, 1), _hex_a_rgb(fondo))
         desplazamiento = int((t_anim / PERIODO_MOVIMIENTO) % 1.0 * ancho)
@@ -866,23 +1015,23 @@ class PintorBarra:
                         px[xm, 0] = _mezclar_rgb(px[xm, 0], contraste, 0.22)
 
         if brillo > 0.01 and px_borde > 0:
-            self._brillo(px, ancho, px_borde, brillo)
+            self._brillo(px, ancho, px_borde, brillo, estela)
 
         if alto != 1:
             fila = fila.resize((ancho, alto), Image.NEAREST)
         return fila
 
     @staticmethod
-    def _brillo(px, ancho: int, borde: int, intensidad: float) -> None:
+    def _brillo(px, ancho: int, borde: int, intensidad: float, estela: int) -> None:
         """Estela tipo cometa detrás de la punta y un halo suave por delante."""
         punta = min(borde, ancho) - 1
         if punta < 0:
             return
         blanco = (255, 255, 255)
         cabeza = _mezclar_rgb(px[punta, 0], blanco, 0.7)
-        for d in range(min(BRILLO_ANCHO, punta + 1)):
+        for d in range(min(estela, punta + 1)):
             x = punta - d
-            f = (1.0 - d / BRILLO_ANCHO) ** 2.4          # curva no lineal
+            f = (1.0 - d / estela) ** 2.4                # curva no lineal
             px[x, 0] = _mezclar_rgb(px[x, 0], blanco, intensidad * f * 0.92)
         for d in range(1, BRILLO_HALO + 1):
             x = punta + d
@@ -895,12 +1044,16 @@ class PintorBarra:
 # --------------------------------------------------------------------------
 # Dibujo auxiliar
 # --------------------------------------------------------------------------
-def _rect_redondeado(lienzo: tk.Canvas, x1, y1, x2, y2, r, **kw) -> int:
-    puntos = [
+def _puntos_redondeados(x1, y1, x2, y2, r) -> list:
+    """Puntos de control de un rectángulo redondeado (polígono con smooth=True)."""
+    return [
         x1 + r, y1, x2 - r, y1, x2, y1, x2, y1 + r, x2, y2 - r, x2, y2,
         x2 - r, y2, x1 + r, y2, x1, y2, x1, y2 - r, x1, y1 + r, x1, y1,
     ]
-    return lienzo.create_polygon(puntos, smooth=True, **kw)
+
+
+def _rect_redondeado(lienzo: tk.Canvas, x1, y1, x2, y2, r, **kw) -> int:
+    return lienzo.create_polygon(_puntos_redondeados(x1, y1, x2, y2, r), smooth=True, **kw)
 
 
 def _medir_texto(lienzo: tk.Canvas, texto: str, fuente, ancho: int | None = None):
@@ -972,64 +1125,202 @@ class _VentanaFlotante:
 
 
 # --------------------------------------------------------------------------
-# Burbuja de aviso tipo WhatsApp sobre la punta de la barra
+# Burbujas de aviso: junto al cursor o sobre la punta de la barra
 # --------------------------------------------------------------------------
+class DetectorZigzag:
+    """
+    Detecta una sacudida horizontal rápida del ratón (→ ← → ←). Cuenta los
+    cambios de sentido con recorrido suficiente y poca componente vertical;
+    con ZIGZAG_CAMBIOS dentro de ZIGZAG_VENTANA_S, la sacudida es válida.
+    """
+
+    def __init__(self) -> None:
+        self.sentido = 0
+        self.inicio_x = 0.0
+        self.extremo_x = 0.0
+        self.vertical = 0.0
+        self.ultimo: tuple[int, int] | None = None
+        self.cambios: list[float] = []
+
+    def alimentar(self, x: int, y: int, t: float) -> bool:
+        if self.ultimo is None:
+            self.ultimo = (x, y)
+            self.inicio_x = self.extremo_x = float(x)
+            return False
+        _, uy = self.ultimo
+        self.ultimo = (x, y)
+        self.vertical += abs(y - uy)
+
+        if self.sentido == 0:
+            if abs(x - self.inicio_x) >= ZIGZAG_HISTERESIS_PX:
+                self.sentido = 1 if x > self.inicio_x else -1
+                self.extremo_x = float(x)
+            return False
+
+        if (x - self.extremo_x) * self.sentido > 0:
+            self.extremo_x = float(x)                   # sigue en el mismo sentido
+        elif abs(x - self.extremo_x) >= ZIGZAG_HISTERESIS_PX:
+            recorrido = abs(self.extremo_x - self.inicio_x)
+            if recorrido >= ZIGZAG_MIN_PX and self.vertical <= recorrido * ZIGZAG_MAX_VERTICAL:
+                self.cambios.append(t)
+            else:
+                self.cambios.clear()                    # un vaivén flojo rompe la serie
+            self.inicio_x = self.extremo_x
+            self.extremo_x = float(x)
+            self.sentido = -self.sentido
+            self.vertical = 0.0
+
+        self.cambios = [c for c in self.cambios if t - c <= ZIGZAG_VENTANA_S]
+        return len(self.cambios) >= ZIGZAG_CAMBIOS
+
+
 class Burbuja(_VentanaFlotante):
+    """
+    Burbuja tipo chat que no captura clics: todo pasa a la ventana de debajo.
+    El cuerpo persigue a su objetivo con inercia y una zona muerta, así que
+    una sacudida rápida apenas lo mueve; la colita, en cambio, apunta al
+    objetivo en tiempo real. Se cierra sola o sacudiendo el ratón.
+
+      modo "cursor": el objetivo es el puntero; encima o, si no cabe, debajo.
+      modo "barra":  el objetivo es la punta de la barra; siempre encima.
+    """
+
     def __init__(
-        self, root: tk.Tk, texto: str, tema: str, ancla: tuple, segundos: float, al_cerrar
+        self, root: tk.Tk, texto: str, tema: str, modo: str,
+        objetivo, limites, segundos: float, al_cerrar, pop: bool = True,
     ) -> None:
         super().__init__(root)
         self.texto = texto
+        self.modo = modo
+        self.objetivo = objetivo            # () -> (x, y) en pantalla
+        self.limites = limites              # (x, y) -> (izq, arriba, der, abajo)
         self.al_cerrar = al_cerrar
-        self._cerrada = False
+        self.pop = pop
+        self._cerrando = False
         self._terminada = False
+        self._tam_fuente: int | None = None
+        self.zigzag = DetectorZigzag()
+        self.punta_pantalla = (0, 0)
+        self.geom: str | None = None
         t = TEMAS_UI[tema]
-        fuente = ("Segoe UI", 10)
-        x_punta, y_punta, x_min, x_max = ancla
 
-        tw, th = _medir_texto(self.lienzo, texto, fuente, BURBUJA_ANCHO_TEXTO)
-        w = tw + 2 * BURBUJA_PADX
-        h = th + 2 * BURBUJA_PADY
-        alto_total = h + BURBUJA_COLA
+        tw, th = _medir_texto(self.lienzo, texto, ("Segoe UI", 10), BURBUJA_ANCHO_TEXTO)
+        self.w = tw + 2 * BURBUJA_PADX
+        self.h = th + 2 * BURBUJA_PADY
+        self.W = self.w + 2 * BURBUJA_MARGEN_X
+        self.H = self.h + 2 * BURBUJA_MARGEN_Y
+        self.lienzo.configure(width=self.W, height=self.H)
 
-        wx = max(x_min, min(x_max - w - 1, x_punta - w // 2))
-        wy = y_punta - alto_total - 1
-        punta_rel = max(2, min(w - 2, x_punta - wx))
-        base_cola = max(BURBUJA_RADIO + 8, min(w - BURBUJA_RADIO - 8, punta_rel))
-
-        self.lienzo.configure(width=w + 1, height=alto_total + 1)
-        _rect_redondeado(
-            self.lienzo, 0, 0, w, h, BURBUJA_RADIO,
-            fill=t["burbuja_bg"], outline=t["burbuja_borde"],
+        # Orden de dibujo: cuerpo, colita, "tapa" que borra el borde en la
+        # unión y, encima de todo, el texto.
+        self.item_cuerpo = self.lienzo.create_polygon(
+            0, 0, 0, 0, 0, 0, smooth=True, fill=t["burbuja_bg"], outline=t["burbuja_borde"]
         )
-        self.lienzo.create_polygon(
-            base_cola - 7, h - 1, base_cola + 7, h - 1, punta_rel, h + BURBUJA_COLA,
-            fill=t["burbuja_bg"], outline=t["burbuja_borde"],
+        self.item_cola = self.lienzo.create_polygon(
+            0, 0, 0, 0, 0, 0, fill=t["burbuja_bg"], outline=t["burbuja_borde"]
         )
-        self.lienzo.create_line(
-            base_cola - 6, h - 1, base_cola + 6, h - 1, fill=t["burbuja_bg"], width=2,
-        )
-        self.lienzo.create_text(
-            BURBUJA_PADX, BURBUJA_PADY, text=texto, font=fuente, anchor="nw",
-            width=BURBUJA_ANCHO_TEXTO, fill=t["burbuja_fg"],
+        self.item_tapa = self.lienzo.create_line(0, 0, 0, 0, fill=t["burbuja_bg"], width=2)
+        self.item_texto = self.lienzo.create_text(
+            0, 0, text=texto, font=("Segoe UI", 10), width=BURBUJA_ANCHO_TEXTO,
+            fill=t["burbuja_fg"], anchor="center", justify="left",
         )
 
-        self.lienzo.configure(cursor="hand2")
-        self.lienzo.bind("<Button-1>", lambda _e: self.cerrar(inmediato=True))
-        self.mostrar(f"{w + 1}x{alto_total + 1}+{wx}+{wy}", alpha=0.0, clicable=True)
-        self.fundido(0.0, 1.0, 180)
+        self.t0 = time.monotonic()
+        tx, ty = self.objetivo()
+        self.cx = float(tx)                 # centro del cuerpo en pantalla
+        self.cy: float | None = None        # borde superior del cuerpo en pantalla
+        self._actualizar(tx, ty, primera=True)
+        self.mostrar(self.geom, alpha=0.0)  # click-through: no se puede pulsar
+        self._ultimo_topmost = time.monotonic()
+        self.fundido(0.0, 1.0, 120)
+        self._bucle()
         root.after(int(segundos * 1000), self.cerrar)
 
-    def cerrar(self, inmediato: bool = False) -> None:
-        """Se apaga con fundido al acabar su tiempo; con un clic, al instante."""
-        if inmediato:
-            self._terminar()
+    # ------------------------------------------------------------ geometría
+    def _actualizar(self, tx: int, ty: int, primera: bool = False) -> None:
+        izq, arriba, der, abajo = self.limites(tx, ty)
+        w, h = self.w, self.h
+
+        if self.modo == "cursor":
+            encima = ty - BURBUJA_SOBRE_CURSOR - BURBUJA_COLA - h >= arriba
+            punta_y = ty - BURBUJA_SOBRE_CURSOR if encima else ty + BURBUJA_BAJO_CURSOR
+        else:
+            encima = True
+            punta_y = ty
+
+        # Horizontal: zona muerta + inercia (el zigzag casi no mueve el cuerpo).
+        if primera:
+            self.cx = float(tx)
+        else:
+            exceso = tx - self.cx
+            if abs(exceso) > BURBUJA_ZONA_MUERTA:
+                destino = tx - math.copysign(BURBUJA_ZONA_MUERTA, exceso)
+                self.cx += (destino - self.cx) * BURBUJA_INERCIA
+        self.cx = max(izq + w / 2 + 2, min(der - w / 2 - 2, self.cx))
+
+        # Vertical: casi al instante.
+        arriba_cuerpo = punta_y - BURBUJA_COLA - h if encima else punta_y + BURBUJA_COLA
+        arriba_cuerpo = max(arriba + 1, min(abajo - h - 1, arriba_cuerpo))
+        if primera or self.cy is None:
+            self.cy = float(arriba_cuerpo)
+        else:
+            self.cy += (arriba_cuerpo - self.cy) * BURBUJA_INERCIA_V
+
+        win_x = int(round(self.cx - w / 2 - BURBUJA_MARGEN_X))
+        win_y = int(round(self.cy - BURBUJA_MARGEN_Y))
+        geom = f"{self.W}x{self.H}+{win_x}+{win_y}"
+        if geom != self.geom:
+            self.geom = geom
+            if not primera:
+                self.ventana.geometry(geom)
+
+        # Cuerpo (con el "pop" de entrada) y texto.
+        s = escala_pop((time.monotonic() - self.t0) * 1000 / POP_MS) if self.pop else 1.0
+        bx = BURBUJA_MARGEN_X + w / 2
+        by = BURBUJA_MARGEN_Y + h / 2
+        x1, y1, x2, y2 = bx - w * s / 2, by - h * s / 2, bx + w * s / 2, by + h * s / 2
+        r = BURBUJA_RADIO * s
+        self.lienzo.coords(self.item_cuerpo, *_puntos_redondeados(x1, y1, x2, y2, r))
+        tam = max(6, int(round(10 * s)))
+        if tam != self._tam_fuente:
+            self._tam_fuente = tam
+            self.lienzo.itemconfigure(self.item_texto, font=("Segoe UI", tam))
+        self.lienzo.coords(self.item_texto, bx, by)
+
+        # Colita: la punta, en el objetivo real; la base, en el borde del cuerpo.
+        px = max(2, min(self.W - 2, tx - win_x))
+        py = max(1, min(self.H - 1, punta_y - win_y))
+        base = max(x1 + r + 6, min(x2 - r - 6, px))
+        borde_y = y2 - 1 if encima else y1 + 1
+        self.lienzo.coords(self.item_cola, base - 7, borde_y, base + 7, borde_y, px, py)
+        self.lienzo.coords(self.item_tapa, base - 6, borde_y, base + 6, borde_y)
+        self.punta_pantalla = (win_x + px, win_y + py)
+
+    def _bucle(self) -> None:
+        if self._terminada or not self.existe():
             return
-        if self._cerrada:
+        try:
+            tx, ty = self.objetivo()
+            self._actualizar(tx, ty)
+            ahora = time.monotonic()
+            cx, cy = _posicion_cursor()
+            if not self._cerrando and self.zigzag.alimentar(cx, cy, ahora):
+                self.cerrar(rapido=True)
+            if ahora - self._ultimo_topmost > 0.5:
+                self._ultimo_topmost = ahora
+                _forzar_topmost(self.hwnd)
+        except tk.TclError:
             return
-        self._cerrada = True
+        self.root.after(INTERVALO_BURBUJA_MS, self._bucle)
+
+    # --------------------------------------------------------------- cierre
+    def cerrar(self, rapido: bool = False) -> None:
+        """Se apaga con fundido al acabar su tiempo; con el zigzag, casi al instante."""
+        if self._cerrando:
+            return
+        self._cerrando = True
         if self.existe():
-            self.fundido(1.0, 0.0, 350, self._terminar)
+            self.fundido(1.0, 0.0, 100 if rapido else 350, self._terminar)
         else:
             self._terminar()
 
@@ -1046,12 +1337,12 @@ class GestorBurbujas:
 
     def __init__(self, app: "BarraJornada") -> None:
         self.app = app
-        self.cola: list[tuple[str, float, bool]] = []
+        self.cola: list[tuple[str, float | None, bool]] = []
         self.actual: Burbuja | None = None
         self._bucle()
 
     def encolar(
-        self, texto: str, segundos: float = BURBUJA_SEGUNDOS,
+        self, texto: str, segundos: float | None = None,
         urgente: bool = False, respetar_no_molestar: bool = True,
     ) -> None:
         if not texto.strip():
@@ -1069,13 +1360,26 @@ class GestorBurbujas:
                 ocupado = respetar and self.app.cfg["no_molestar"] and pantalla_ocupada()
                 if not ocupado:
                     self.cola.pop(0)
-                    self.app.asomar(segundos + 1.0)
-                    self.actual = Burbuja(
-                        self.app.root, texto, self.app.tema_ui,
-                        self.app.ancla_burbuja(), segundos, self._al_cerrar,
-                    )
+                    self.actual = self._mostrar(texto, segundos)
         finally:
             self.app.root.after(INTERVALO_BURBUJAS_MS, self._bucle)
+
+    def _mostrar(self, texto: str, segundos: float | None) -> Burbuja:
+        cfg = self.app.cfg
+        if segundos is None:
+            segundos = duracion_aviso(texto, cfg["aviso_segundos"])
+        modo = cfg["aviso_posicion"]
+        if modo == "cursor":
+            objetivo, limites = _posicion_cursor, area_monitor
+        else:
+            self.app.asomar(segundos + 1.0)
+            objetivo, limites = self.app.punta_en_pantalla, self.app.limites_barra
+        burbuja = Burbuja(
+            self.app.root, texto, self.app.tema_ui, modo, objetivo, limites,
+            segundos, self._al_cerrar,
+        )
+        self.app.root.after(150, lambda: self.app.diagnostico_burbuja(burbuja))
+        return burbuja
 
     def _al_cerrar(self) -> None:
         self.actual = None
@@ -1254,6 +1558,7 @@ class CelebracionTexto(_VentanaFlotante):
 CLAVES_VISUALES = (
     "estilo_trabajo", "estilo_descanso", "color_extra", "altura", "marcas_hora",
     "tema_barra", "tema_app", "atenuacion", "brillo", "brillo_modo", "saltos",
+    "preaviso_s",
 )
 SIN_PALETA = "Elegir…"
 
@@ -1654,6 +1959,17 @@ class DialogoConfiguracion(tk.Toplevel):
         self.spin_asomar_seg.pack(side="left", padx=4)
         self._lbl(marco, "s").pack(side="left")
         fila += 1
+        self.radio_vis_salto = self._radio(
+            p, "Al pasar el ratón + aparecer con cada salto", self.v_visibilidad, "salto"
+        )
+        self.radio_vis_salto.grid(row=fila, column=0, columnspan=4, sticky="w")
+        fila += 1
+        fila = self._pista(
+            p, "Aparece unos segundos antes de cada salto y se esconde al terminar. "
+               "Necesita el avance por saltos (pestaña Apariencia). Recomendado con "
+               "saltos largos, de 10 min o más: con rangos cortos aparecerá cada dos por tres.",
+            fila,
+        )
 
         fila = self._titulo(p, "Tamaño", fila)
         marco = self._marco(p)
@@ -1757,7 +2073,7 @@ class DialogoConfiguracion(tk.Toplevel):
         c = self.cfg
         t = self.t
         self.v_avisos = tk.BooleanVar(value=c["avisos"])
-        self._check(p, "Mostrar avisos de hito en una burbuja sobre la barra",
+        self._check(p, "Mostrar avisos de hito en una burbuja",
                     self.v_avisos).grid(row=0, column=0, columnspan=4, sticky="w", pady=(4, 0))
         fila = self._pista(
             p, "Valor: 25 para un % de la jornada; 7:30 o 0:30 para tiempos. "
@@ -1797,6 +2113,31 @@ class DialogoConfiguracion(tk.Toplevel):
         fila = self._pista(
             p, "Varias frases separadas con | → cada día sale una al azar.   "
                "Variables: {restante} {trabajado} {salida} {porcentaje}", fila,
+        )
+
+        fila = self._titulo(p, "Dónde y cuánto", fila)
+        marco = self._marco(p)
+        marco.grid(row=fila, column=0, columnspan=4, sticky="w")
+        self.v_aviso_posicion = tk.StringVar(value=c["aviso_posicion"])
+        self._lbl(marco, "Mostrar").pack(side="left", padx=(0, 6))
+        self._radio(marco, "Junto al cursor", self.v_aviso_posicion, "cursor").pack(side="left", padx=(0, 10))
+        self._radio(marco, "En la punta de la barra", self.v_aviso_posicion, "barra").pack(side="left")
+        fila += 1
+        marco = self._marco(p)
+        marco.grid(row=fila, column=0, columnspan=4, sticky="w")
+        self.v_aviso_auto = tk.BooleanVar(value=c["aviso_segundos"] == 0)
+        self._lbl(marco, "Duración").pack(side="left", padx=(0, 6))
+        self._radio(marco, "Automática según el texto", self.v_aviso_auto, True).pack(side="left", padx=(0, 10))
+        self._radio(marco, "Fija", self.v_aviso_auto, False).pack(side="left")
+        self.spin_aviso_seg = self._spin(marco, c["aviso_segundos"] or 6, 2, 60)
+        self.spin_aviso_seg.pack(side="left", padx=4)
+        self._lbl(marco, "s").pack(side="left")
+        fila += 1
+        fila = self._pista(
+            p, "Los avisos no se pueden pulsar: los clics pasan a la ventana de debajo. "
+               "Para quitar uno antes de tiempo, sacude el ratón a izquierda y derecha "
+               "(→ ← → ←). Automática: 4 s + 0,3 s por palabra, entre 5 y 10 s.",
+            fila,
         )
 
         fila = self._titulo(p, "Comportamiento", fila)
@@ -1900,7 +2241,7 @@ class DialogoConfiguracion(tk.Toplevel):
         self.entrada_texto = self._entry(p, 34, c["texto_celebracion"])
         self.entrada_texto.grid(row=fila, column=1, sticky="w", padx=6, pady=2)
         fila += 1
-        self._radio(p, "Minimalista (burbuja discreta sobre la barra, con el texto de arriba)",
+        self._radio(p, "Minimalista (una burbuja discreta, donde salgan los avisos, con el texto de arriba)",
                     self.v_celebracion, "minimalista").grid(row=fila, column=0, columnspan=3, sticky="w")
         fila += 1
         self._radio(p, "Ninguna", self.v_celebracion, "ninguna").grid(
@@ -2010,6 +2351,24 @@ class DialogoConfiguracion(tk.Toplevel):
         )
         self.check_saltos.grid(row=fila, column=0, columnspan=4, sticky="w", padx=(22, 0), pady=(4, 0))
         fila += 1
+        marco = self._marco(p)
+        marco.grid(row=fila, column=0, columnspan=4, sticky="w", padx=(44, 0))
+        self.label_preaviso = self._lbl(marco, "Preaviso: la cabeza brilla")
+        self.label_preaviso.pack(side="left")
+        self.spin_preaviso = self._spin(marco, c["preaviso_s"], 0, 5, 3)
+        self.spin_preaviso.pack(side="left", padx=4)
+        self.label_preaviso2 = self._lbl(marco, "s antes de saltar")
+        self.label_preaviso2.pack(side="left")
+        fila += 1
+        marco = self._marco(p)
+        marco.grid(row=fila, column=0, columnspan=4, sticky="w", padx=(44, 0))
+        self.label_recta = self._lbl(marco, "Recta final: avance normal los últimos")
+        self.label_recta.pack(side="left")
+        self.spin_recta = self._spin(marco, c["recta_final_min"], 0, 120, 4)
+        self.spin_recta.pack(side="left", padx=4)
+        self.label_recta2 = self._lbl(marco, "min (0 = nunca)")
+        self.label_recta2.pack(side="left")
+        fila += 1
         self._pista(p, "Con dos valores distintos, cada pulso elige uno al azar dentro "
                        "de ese rango. Con dos iguales, el intervalo es fijo. "
                        "Los saltos necesitan «Cada … píxeles» o «Cada … minutos»; cuanto "
@@ -2067,7 +2426,17 @@ class DialogoConfiguracion(tk.Toplevel):
         for modo, spins in self.spins_brillo.items():
             for s in spins:
                 estado(s, brillo and self.v_brillo_modo.get() == modo)
-        estado(self.check_saltos, brillo and self.v_brillo_modo.get() != "continuo")
+        saltos_posible = brillo and self.v_brillo_modo.get() != "continuo"
+        estado(self.check_saltos, saltos_posible)
+        saltos = saltos_posible and self.v_saltos.get()
+        for w in (self.spin_preaviso, self.spin_recta):
+            estado(w, saltos)
+        for w in (self.label_preaviso, self.label_preaviso2, self.label_recta, self.label_recta2):
+            w.configure(fg=self.t["fg"] if saltos else self.t["tenue"])
+        estado(self.radio_vis_salto, saltos)
+        if not saltos and self.v_visibilidad.get() == "salto":
+            self.v_visibilidad.set("auto")      # sin saltos no hay con qué aparecer
+        estado(self.spin_aviso_seg, not self.v_aviso_auto.get())
 
     # --------------------------------------------------------------- recoger
     def _recoger(self, estricto: bool = True) -> tuple[str, dict]:
@@ -2143,6 +2512,16 @@ class DialogoConfiguracion(tk.Toplevel):
         c["brillo"] = bool(self.v_brillo.get())
         c["brillo_modo"] = self.v_brillo_modo.get()
         c["saltos"] = bool(self.v_saltos.get())
+        c["preaviso_s"] = self.spin_preaviso.var.get()
+        c["recta_final_min"] = self.spin_recta.var.get()
+        c["aviso_posicion"] = self.v_aviso_posicion.get()
+        c["aviso_segundos"] = 0 if self.v_aviso_auto.get() else max(2, _entero(
+            self.spin_aviso_seg.var.get(), 2, 60, 6
+        ))
+        if c["visibilidad"] == "salto" and not (
+            c["saltos"] and c["brillo"] and c["brillo_modo"] != "continuo"
+        ):
+            c["visibilidad"] = "auto"
         (p1, p2), (m1, m2) = self.spins_brillo["pixeles"], self.spins_brillo["minutos"]
         c["brillo_px_min"], c["brillo_px_max"] = p1.var.get(), p2.var.get()
         c["brillo_min_min"], c["brillo_min_max"] = m1.var.get(), m2.var.get()
@@ -2178,17 +2557,27 @@ class DialogoConfiguracion(tk.Toplevel):
         ed = estilo_para_tema(v["estilo_descanso"], tema, v["atenuacion"])
         a, b, borde = int(ancho * 0.38), int(ancho * 0.55), int(ancho * 0.78)
         ahora = time.monotonic()
-        ciclo = ahora % 3.0
-        brillo = envolvente_brillo(ciclo) if v["brillo"] else 0.0
+        estela = BRILLO_ANCHO
         if v["brillo"] and v["saltos"] and v["brillo_modo"] != "continuo":
-            # Simula un salto: la punta corre los últimos 30 px y luego espera.
-            borde = int(ancho * 0.78) - 30 + int(30 * suavizar_salida(ciclo / SALTO_BASE_S))
+            # Simula la secuencia: preaviso (respira), salto de 30 px, apagado.
+            preaviso = min(float(v["preaviso_s"]), 2.0)
+            mantener = preaviso + SALTO_BASE_S - BRILLO_ATAQUE + 0.15
+            periodo = BRILLO_ATAQUE + mantener + BRILLO_CAIDA + 0.8
+            ciclo = ahora % periodo
+            brillo = envolvente_brillo(ciclo, 0.0, mantener) * respiracion(ciclo, preaviso)
+            avance = suavizar_salida((ciclo - preaviso) / SALTO_BASE_S) if ciclo > preaviso else 0.0
+            borde = int(ancho * 0.78) - 30 + int(30 * avance)
+            if ciclo < preaviso + SALTO_BASE_S:
+                estela = int(BRILLO_ANCHO * ESTELA_SALTO)
+        else:
+            ciclo = ahora % 3.0
+            brillo = envolvente_brillo(ciclo) if v["brillo"] else 0.0
         marcas = [int(ancho * k / 8.5) for k in range(1, 9)] if v["marcas_hora"] else []
         img = self.pintor.pintar(
             ancho, alto, FONDO_BARRA[tema], recortar_segmentos(
                 [(0, a, et), (a, b, ed), (b, int(ancho * 0.78), et)], borde
             ),
-            0.6, ahora, brillo, borde, marcas,
+            0.6, ahora, brillo, borde, marcas, estela,
         )
         self._foto_previa = ImageTk.PhotoImage(img)
         self.lienzo_previa.itemconfigure(self._item_previa, image=self._foto_previa)
@@ -2276,6 +2665,10 @@ class BarraJornada:
         self.pulso_inicio: float | None = None
         self.pulso_base = 0.0
         self.pulso_mantener = BRILLO_MANTENER
+        self.pulso_preaviso = 0.0           # s de "respiración" antes de saltar
+        self._destello_pendiente = False    # esperando a que la barra aparezca
+        self._recta_final_iniciada = False
+        self.diagnostico_activo = os.path.exists(RUTA_DIAGNOSTICO_ON)
         self._ultimo_px = -1
         self._umbral_px: int | None = None
         self._proximo_brillo: float | None = None
@@ -2337,12 +2730,22 @@ class BarraJornada:
     def _en_horas_extra(self) -> bool:
         return self.completada and self.cfg["al_completar"] == "extra"
 
-    def _saltos_activos(self) -> bool:
+    def _saltos_configurados(self) -> bool:
         c = self.cfg
         return (
             c["saltos"] and c["brillo"] and c["brillo_modo"] != "continuo"
             and not self._en_horas_extra()
         )
+
+    def _en_recta_final(self) -> bool:
+        """Últimos minutos de la jornada: se avanza de forma continua."""
+        minutos = self.cfg["recta_final_min"]
+        if minutos <= 0 or self.inicio is None:
+            return False
+        return self._trabajo_restante() <= minutos * 60
+
+    def _saltos_activos(self) -> bool:
+        return self._saltos_configurados() and not self._en_recta_final()
 
     # ---------------------------------------------------------------- estado
     def _cargar_estado(self) -> bool:
@@ -2491,6 +2894,8 @@ class BarraJornada:
         self._lanzar_celebracion(cfg, lambda: None)
 
     def _probar_aviso(self, cfg: dict) -> None:
+        self.cfg["aviso_posicion"] = cfg["aviso_posicion"]
+        self.cfg["aviso_segundos"] = cfg["aviso_segundos"]
         mensaje = cfg["hitos"][0]["mensaje"] if cfg["hitos"] else "Así se verán los avisos."
         self.burbujas.encolar(
             self._formatear_mensaje(mensaje), urgente=True, respetar_no_molestar=False
@@ -2614,9 +3019,27 @@ class BarraJornada:
             self.root.after(200, self._disparar_brillo)
             self._programar_asomo()
 
-    def ancla_burbuja(self) -> tuple[int, int, int, int]:
-        x = self.x + max(0, min(self.ancho - 1, self.px_borde - 1))
-        return x, self.base_y - self.altura - 3, self.x, self.x + self.ancho
+    def punta_en_pantalla(self) -> tuple[int, int]:
+        """
+        Centro del último píxel pintado de la barra, en coordenadas de pantalla.
+        Se mide con el rectángulo REAL de la ventana de la barra que da Windows,
+        no con la geometría que le pedimos, por si el escalado la desplaza.
+        """
+        x0, y0, ancho_real = self.x, self.base_y - self.altura, self.ancho
+        if hasattr(self, "hwnd_barra") and self.altura_visible > 0:
+            rect = rect_ventana(self.hwnd_barra)
+            if rect:
+                x0, ancho_real = rect[0], rect[2] - rect[0]
+                y0 = rect[3] - self.altura
+        escala = ancho_real / self.ancho if self.ancho else 1.0
+        punta = max(0.0, min(self.ancho - 0.5, self.px_borde - 0.5))
+        # floor, no round: round() de Python redondea al par (376,5 -> 376 pero
+        # 383,5 -> 384) y el mismo píxel caería a un lado u otro según la posición.
+        return int(math.floor(x0 + punta * escala)), y0 - 2
+
+    def limites_barra(self, _x: int = 0, _y: int = 0) -> tuple[int, int, int, int]:
+        _, arriba, _, _ = area_monitor(self.x + 1, self.base_y - 1)
+        return self.x, arriba, self.x + self.ancho, self.base_y
 
     # -------------------------------------------------------------- progreso
     def _descanso_acumulado(self, momento: datetime) -> float:
@@ -2696,10 +3119,25 @@ class BarraJornada:
             segmentos[-1] = (x0, px_borde, estilo)
         self.segmentos = segmentos
         self.px_real = px_borde
-        if self.px_visible is None or not self._saltos_activos():
+        if self.px_visible is None or not self._saltos_configurados():
             self.px_visible = float(px_borde)       # sin saltos: sigue al tiempo real
             self._salto = None
+            self._recta_final_iniciada = False
+        elif self._en_recta_final():
+            # Recta final: un último salto suelta lo acumulado y, a partir de
+            # ahí, la barra avanza de forma continua hasta el final.
+            ocupado = self._salto is not None or self._destello_pendiente
+            if ocupado:
+                self.px_visible = min(self.px_visible, float(px_borde))
+            elif not self._recta_final_iniciada and self.px_visible < px_borde - 0.5:
+                self._recta_final_iniciada = True
+                self.px_visible = min(self.px_visible, float(px_borde))
+                self.root.after(0, lambda: self._iniciar_destello(final=True))
+            else:
+                self._recta_final_iniciada = True
+                self.px_visible = float(px_borde)
         else:
+            self._recta_final_iniciada = False
             # La punta visible nunca va por delante de la real (p. ej. tras
             # cambiar la hora de inicio o la duración).
             self.px_visible = min(self.px_visible, float(px_borde))
@@ -2736,6 +3174,8 @@ class BarraJornada:
     def _avanzar_salto(self, ahora: float) -> None:
         if self._salto is None:
             return
+        if ahora < self._salto["inicio"]:
+            return                          # preaviso: la cabeza brilla, la barra espera
         u = (ahora - self._salto["inicio"]) / self._salto["duracion"]
         if u >= 1.0:
             self.px_visible = float(self.px_real)
@@ -2753,9 +3193,10 @@ class BarraJornada:
         segmentos = self.segmentos
         if self.px_borde < self.px_real:
             segmentos = recortar_segmentos(segmentos, self.px_borde)
+        estela = int(BRILLO_ANCHO * ESTELA_SALTO) if self._salto is not None else BRILLO_ANCHO
         img = self.pintor.pintar(
             self.ancho, self.altura, FONDO_BARRA[self.tema_barra], segmentos,
-            self.progreso_real, ahora, brillo, self.px_borde, self.marcas,
+            self.progreso_real, ahora, brillo, self.px_borde, self.marcas, estela,
         )
         self._foto = ImageTk.PhotoImage(img)
         self.lienzo.itemconfigure(self._item_barra, image=self._foto)
@@ -2779,15 +3220,18 @@ class BarraJornada:
         if s >= BRILLO_ATAQUE + self.pulso_mantener + BRILLO_CAIDA:
             self.pulso_inicio = None
             return 0.0
-        return envolvente_brillo(s, self.pulso_base, self.pulso_mantener)
+        return envolvente_brillo(s, self.pulso_base, self.pulso_mantener) * respiracion(
+            s, self.pulso_preaviso
+        )
 
-    def _soltar_acumulado(self, ahora: float) -> float:
+    def _soltar_acumulado(self, ahora: float) -> tuple[float, float]:
         """
-        Avance por saltos: arranca el deslizamiento hasta la punta real.
-        Devuelve su duración (0 si no había nada que soltar).
+        Avance por saltos: programa el salto hasta la punta real tras el
+        preaviso. Devuelve (preaviso, duración del salto); (0, 0) si no hay
+        nada que soltar.
         """
-        if not self._saltos_activos() or self.px_visible is None:
-            return 0.0
+        if not self._saltos_configurados() or self.px_visible is None:
+            return 0.0, 0.0
         acumulado = ahora - self._ultima_suelta
         self._ultima_suelta = ahora
         # Cualquier destello reinicia el ciclo, sea periódico, de hito o al asomar.
@@ -2801,16 +3245,21 @@ class BarraJornada:
                 self.cfg["brillo_min_min"], self.cfg["brillo_min_max"]
             ) * 60
         if self.px_real - self.px_visible < 0.5:
-            return 0.0
+            return 0.0, 0.0
+        preaviso = float(self.cfg["preaviso_s"])
         duracion = duracion_salto(acumulado)
-        self._salto = {"inicio": ahora, "desde": self.px_visible, "duracion": duracion}
-        return duracion
+        self._salto = {
+            "inicio": ahora + preaviso, "desde": self.px_visible, "duracion": duracion,
+        }
+        return preaviso, duracion
 
     def _disparar_brillo(self) -> None:
         if not self.cfg["brillo"] or self._en_horas_extra():
             return
+        if self._salto is not None:
+            return                      # ya hay un salto en marcha
         ahora = time.monotonic()
-        duracion = self._soltar_acumulado(ahora)
+        preaviso, duracion = self._soltar_acumulado(ahora)
         if duracion == 0.0 and (
             self.pulso_inicio is not None and ahora - self.pulso_inicio < BRILLO_ATAQUE
         ):
@@ -2818,9 +3267,50 @@ class BarraJornada:
         # Si había un pulso apagándose, el nuevo arranca desde su intensidad.
         self.pulso_base = self._intensidad_brillo(ahora)
         self.pulso_inicio = ahora
-        # La cabeza sigue encendida mientras la punta corre hasta su sitio.
-        self.pulso_mantener = max(BRILLO_MANTENER, duracion - BRILLO_ATAQUE + 0.15)
+        # Secuencia de un salto: preaviso (respira) -> salto -> apagado. La
+        # cabeza sigue encendida hasta que la punta llega a su sitio.
+        self.pulso_preaviso = preaviso if duracion else 0.0
+        if duracion:
+            self.pulso_mantener = max(
+                BRILLO_MANTENER, preaviso + duracion - BRILLO_ATAQUE + 0.15
+            )
+        else:
+            self.pulso_mantener = BRILLO_MANTENER
         self._despertar_render()
+
+    def _iniciar_destello(self, final: bool = False) -> None:
+        """
+        Punto de entrada de todo destello. Con «Aparecer con cada salto» y la
+        barra oculta, primero la hace aparecer y espera unos segundos para
+        que dé tiempo a mirar; después, preaviso, salto y apagado.
+        """
+        if self._destello_pendiente:
+            return
+        aparecer = (
+            self.cfg["visibilidad"] == "salto"
+            and self._saltos_configurados()
+            and (final or not self._en_recta_final())
+            and self._salto is None
+            and self.px_visible is not None
+            and self.px_real - self.px_visible >= 0.5
+            and self.altura_visible < self.altura
+        )
+        if not aparecer:
+            self._disparar_brillo()
+            return
+        acumulado = time.monotonic() - self._ultima_suelta + APARICION_PREVIA_S
+        total = (
+            APARICION_PREVIA_S + self.cfg["preaviso_s"] + duracion_salto(acumulado)
+            + BRILLO_CAIDA
+        )
+        self.asomar(total)
+        self._destello_pendiente = True
+
+        def lanzar() -> None:
+            self._destello_pendiente = False
+            self._disparar_brillo()
+
+        self.root.after(int(APARICION_PREVIA_S * 1000), lanzar)
 
     def _gestionar_brillo(self) -> None:
         if not self.cfg["brillo"] or self._en_horas_extra():
@@ -2831,14 +3321,14 @@ class BarraJornada:
             px = self.px_real               # el ciclo cuenta el avance retenido
         if modo == "continuo":
             if 0 <= self._ultimo_px < px:
-                self._disparar_brillo()
+                self._iniciar_destello()
             self._ultimo_px = px
         elif modo == "pixeles":
             salto = random.randint(self.cfg["brillo_px_min"], self.cfg["brillo_px_max"])
             if self._umbral_px is None:
                 self._umbral_px = px + salto
             elif px >= self._umbral_px:
-                self._disparar_brillo()
+                self._iniciar_destello()
                 self._umbral_px = px + salto
         else:
             ahora = time.monotonic()
@@ -2846,7 +3336,7 @@ class BarraJornada:
             if self._proximo_brillo is None:
                 self._proximo_brillo = ahora + espera
             elif ahora >= self._proximo_brillo:
-                self._disparar_brillo()
+                self._iniciar_destello()
                 self._proximo_brillo = ahora + espera
 
     # ----------------------------------------------------------------- lógica
@@ -3005,7 +3495,7 @@ class BarraJornada:
             cambios = True
             if self.cfg["avisos"] and not self.silenciado:
                 self._avisar(self._formatear_mensaje(hito["mensaje"]))
-                self.root.after(300, self._disparar_brillo)
+                self.root.after(300, self._iniciar_destello)
 
         auto_activo = self.descanso_auto is not None and self.descanso_auto["hasta"] is None
         if self.cfg["descanso_largo"] and self.modo == "descanso" and not auto_activo:
@@ -3021,6 +3511,44 @@ class BarraJornada:
                     self._avisar(self._formatear_mensaje(self.cfg["descanso_largo_msg"]))
         if cambios:
             self._guardar_estado()
+
+    # ------------------------------------------------------------ diagnóstico
+    def _diagnostico(self, evento: str, datos: dict) -> None:
+        """Si existe diagnostico.on, añade una línea JSON a diagnostico.log."""
+        if not self.diagnostico_activo:
+            return
+        try:
+            linea = {"hora": datetime.now().isoformat(timespec="seconds"),
+                     "version": VERSION, "evento": evento, **datos}
+            with open(RUTA_DIAGNOSTICO_LOG, "a", encoding="utf-8") as f:
+                f.write(json.dumps(linea, ensure_ascii=False) + "\n")
+        except OSError:
+            pass
+
+    def diagnostico_burbuja(self, burbuja: "Burbuja") -> None:
+        if not self.diagnostico_activo or not burbuja.existe():
+            return
+        datos = {
+            "dpi_modo": MODO_DPI,
+            "modo_aviso": burbuja.modo,
+            "barra_pedida": [self.x, self.base_y - self.altura, self.ancho, self.altura],
+            "px_borde": self.px_borde,
+            "px_real": self.px_real,
+            "punta_calculada": list(self.punta_en_pantalla()),
+            "cursor": list(_posicion_cursor()),
+            "punta_colita": list(burbuja.punta_pantalla),
+        }
+        if hasattr(self, "hwnd_barra"):
+            datos["barra_real"] = rect_ventana(self.hwnd_barra)
+            datos["barra_dpi"] = dpi_ventana(self.hwnd_barra)
+            try:
+                datos["barra_tk"] = [self.ventana.winfo_rootx(), self.ventana.winfo_rooty(),
+                                     self.ventana.winfo_width(), self.ventana.winfo_height()]
+            except tk.TclError:
+                pass
+        datos["burbuja_real"] = rect_ventana(burbuja.hwnd)
+        datos["burbuja_pedida"] = burbuja.geom
+        self._diagnostico("burbuja", datos)
 
     # ---------------------------------------------------------------- tooltip
     def _construir_tooltip(self) -> None:
@@ -3081,7 +3609,7 @@ class BarraJornada:
                 self.base_y - max(self.altura, ZONA_DETECCION) - 1 <= y < self.base_y + 1
                 and self.x <= x < self.x + self.ancho
             )
-            if self.cfg["visibilidad"] in ("auto", "asomar"):
+            if self.cfg["visibilidad"] in ("auto", "asomar", "salto"):
                 self._gestionar_revelado(en_zona, ahora)
 
             mostrar_tooltip = en_zona and self.altura_visible > 0
@@ -3298,4 +3826,5 @@ class BarraJornada:
 if __name__ == "__main__":
     if not es_unica_instancia():
         sys.exit(0)
+    activar_dpi_por_monitor()           # antes de crear cualquier ventana
     BarraJornada().ejecutar()

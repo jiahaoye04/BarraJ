@@ -1,6 +1,6 @@
 # BarraJ
 
-![Versión](https://img.shields.io/badge/versi%C3%B3n-2.0.0-2f81f7)
+![Versión](https://img.shields.io/badge/versi%C3%B3n-2.1.0-2f81f7)
 ![Python](https://img.shields.io/badge/python-3.10%2B-3776ab)
 ![Plataforma](https://img.shields.io/badge/plataforma-Windows%2011-555555)
 ![Dependencias](https://img.shields.io/badge/dependencias-pystray%20%C2%B7%20pillow-2e8b57)
@@ -14,16 +14,19 @@ puede pulsar ni estorba: los clics la atraviesan.
 
 - Ves avanzar el día sin mirar el reloj.
 - El descanso no cuenta como trabajo: tu hora de salida se recalcula sola.
-- Te avisa con una burbuja cuando llevas la mitad o te quedan 10 minutos.
+- Te avisa con una burbuja junto al cursor cuando llevas la mitad o te
+  quedan 10 minutos.
 - Y al terminar, lo celebra.
 
-> ### 🆕 Novedades de la 2.0 · «Con brillo propio»
+> ### 🆕 Novedades de la 2.1 · «Que no se te escape»
 >
-> **Avisos de hito** en burbuja, **avance por saltos**, **degradados y colores
-> en movimiento**, un **brillo** nuevo tipo cometa, **tema claro y oscuro**,
-> **descanso automático** y **celebraciones a tu gusto**.
+> Los **avisos aparecen junto al cursor** y se quitan **sacudiendo el ratón**.
+> Los saltos llegan con **preaviso**, para que te dé tiempo a mirar. Hay una
+> **recta final** sin saltos, un modo para **aparecer con cada salto**, y la
+> burbuja de la barra ya **apunta a la punta**.
 >
-> [Leer las notas de la versión →](docs/notas-de-version/2.0.0.md)
+> [Leer las notas de la versión →](docs/notas-de-version/2.1.0.md) ·
+> [Novedades de la 2.0 →](docs/notas-de-version/2.0.0.md)
 
 ---
 
@@ -175,6 +178,7 @@ tocas; **Cancelar** lo deja todo como estaba.
 | **Siempre visible** | Está ahí todo el día. |
 | **Oculta** | Sube al dejar el ratón en el borde de abajo y se esconde 5 segundos después de quitarlo. |
 | **Oculta + asomar** | Además, se asoma sola cada N minutos durante unos segundos. |
+| **Oculta + aparecer con cada salto** | Aparece 2 s antes de cada salto y se esconde al terminar. Solo con el avance por saltos; mejor con saltos de 10 min o más. |
 
 - **Altura** de 2 a 8 píxeles y **marcas** por cada hora trabajada.
 - **Color en trabajo** y **en descanso**, cada uno con su estilo:
@@ -198,11 +202,20 @@ Las tres tienen su propia sección más abajo.
 
 ## Avisos de hito
 
-Una burbuja aparece sobre la punta de la barra cuando llegas a un punto que
-tú eliges, y se va sola a los pocos segundos. **Haz clic en ella** para
-quitarla al momento.
+Una burbuja te avisa cuando llegas a un punto que tú eliges. De serie aparece
+**junto al cursor**, donde estás mirando:
 
-En **Configurar → Avisos**, cada hito tiene tipo, valor y mensaje:
+- **Te sigue con suavidad.** Si mueves un poco el ratón, solo se mueve la
+  colita, que siempre te señala; si te alejas, la burbuja te persigue.
+- **No se puede pulsar**: tus clics pasan siempre a la ventana de debajo.
+- **Para quitarla, sacude el ratón** a izquierda y derecha (→ ← → ←).
+- **Dura lo que tarda en leerse**: 4 s + 0,3 s por palabra, entre 5 y 10 s.
+  También se puede fijar un tiempo.
+
+Si la prefieres sobre la punta de la barra, cámbialo en **Configurar →
+Avisos → Mostrar**.
+
+En la misma pestaña, cada hito tiene tipo, valor y mensaje:
 
 | Tipo | Valor | Salta cuando… |
 |---|---|---|
@@ -238,8 +251,16 @@ Con dos valores distintos, cada destello elige uno al azar dentro del rango;
 con dos iguales, el intervalo es fijo.
 
 **Avance por saltos**: la barra se queda quieta, acumula el avance y lo suelta
-de golpe con cada destello. Cuanto más ha acumulado, más rápido corre la
-punta: 5 minutos se sueltan en 0,6 s y 30 minutos en 1,5 s. El tooltip y los
+de golpe. Cada salto va en tres tiempos:
+
+1. **Preaviso**: la cabeza blanca se enciende y respira con la barra todavía
+   quieta. Dura 2 s de serie y se ajusta de 0 a 5 s.
+2. **Salto**: la punta corre hasta su sitio. Cuanto más ha acumulado, más
+   rápido corre: 5 minutos se sueltan en 0,6 s y 30 minutos en 1,5 s.
+3. **Apagado**: ya en su sitio, la luz se apaga poco a poco.
+
+En la **recta final**, los últimos 10 minutos (configurable), se acaban los
+saltos y la barra avanza de forma continua hasta la salida. El tooltip y los
 avisos usan siempre el tiempo real.
 
 ---
@@ -272,7 +293,7 @@ Celebración**:
 | **Emojis propios** | La misma lluvia, con los tuyos. |
 | **Imagen PNG** | Tu imagen cayendo en varios tamaños. |
 | **Texto** | Una tarjeta con tu frase y el resumen del día. |
-| **Minimalista** | Una burbuja discreta sobre la barra. |
+| **Minimalista** | Una burbuja discreta, donde salgan tus avisos. |
 | **Ninguna** | Nada. |
 
 Puedes seguir trabajando mientras: no bloquea nada. Después, según lo que
@@ -301,9 +322,20 @@ arriba en menos de medio segundo.
 Con los que van a pantalla completa de verdad (vídeos, juegos con F11). Vuelve
 sola al salir de ese modo.
 
+**La barra se ve más fina desde la 2.1.**
+Desde la 2.1 la barra se pinta en píxeles reales en pantallas con escalado
+(125 %, 150 %…), y por eso se ve más nítida, pero también algo más fina.
+Súbele la altura en **Configurar → Barra**.
+
+**La burbuja no apunta bien a la barra o al cursor.**
+Crea un fichero vacío llamado `diagnostico.on` en `%APPDATA%\barra_jornada\`,
+espera a que salga un aviso y envía el `diagnostico.log` que aparece al lado.
+Para desactivarlo, borra `diagnostico.on`.
+
 **¿Gasta mucho?**
 No. En reposo se actualiza una vez por segundo; solo se anima durante un
-destello, un salto o con el degradado en movimiento.
+destello, un salto o con el degradado en movimiento. Mientras hay una burbuja
+en pantalla, la burbuja se redibuja a 60 fps para seguir al ratón.
 
 **El progreso se borra al día siguiente, ¿es normal?**
 Sí. Cada mañana empieza un día nuevo y te pide la hora de inicio.
@@ -347,7 +379,8 @@ Se escriben de forma segura: un apagado brusco no los deja a medias.
 
 | Versión | Fecha | Lo principal |
 |---------|-------|--------------|
-| **2.0.0** | 2026-11-18 | Avisos de hito, avance por saltos, estilos de color, temas, celebraciones · [notas](docs/notas-de-version/2.0.0.md) |
+| **2.1.0** | 2026-11-19 | Avisos junto al cursor, cierre con sacudida, saltos con preaviso, recta final · [notas](docs/notas-de-version/2.1.0.md) |
+| 2.0.0 | 2026-11-18 | Avisos de hito, avance por saltos, estilos de color, temas, celebraciones · [notas](docs/notas-de-version/2.0.0.md) |
 | 1.2.1 | 2026-11-05 | Arreglo del lanzador y requisitos en el README |
 | 1.2.0 | 2026-10-29 | Avance equilibrado y brillo en la punta |
 | 1.1.0 | 2026-07-20 | Tramos de color, el descanso no consume jornada, modo oculto |
