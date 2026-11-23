@@ -9,6 +9,124 @@ Las entradas van de la más nueva a la más antigua.
 
 ---
 
+## 2.1.0 · 2026-11-19 — «Que no se te escape»
+
+Después de un día de uso real, los avisos y los saltos de la 2.0 funcionaban,
+pero no se notaban. Casi toda la versión va de eso.
+
+### Burbuja junto al cursor
+
+- La burbuja ya no puede pulsarse (`WS_EX_TRANSPARENT` de nuevo). Si estuviera
+  junto al cursor y capturara clics, se comería los del trabajo. Por eso el
+  cierre pasa a ser un gesto.
+- **Ventana con holgura**: el lienzo mide `cuerpo + 2 × (110, cola + 10)` px.
+  El cuerpo se dibuja siempre centrado y la colita puede inclinarse dentro de
+  ese margen. La ventana se mueve con `geometry("+x+y")` solo si cambió.
+- **Cuerpo con zona muerta + inercia**: si el objetivo se aleja más de 40 px
+  del centro, el cuerpo recorre el 18 % de la distancia que le falta en cada
+  fotograma (60 fps). En vertical, el 60 %. Un zigzag rápido apenas lo mueve,
+  porque el objetivo vuelve antes de que el cuerpo arranque.
+- **Colita en tiempo real**: la punta va al objetivo exacto (recortada al
+  lienzo); la base se desliza por el borde del cuerpo, entre las esquinas.
+  Orden de dibujo: cuerpo, cola, «tapa» de 2 px del color de fondo que borra
+  el borde en la unión, y texto.
+- **Encima o debajo**: en modo cursor, la punta queda 6 px por encima del
+  puntero. Si no cabe, va 24 px por debajo, para no tapar la flecha. Los
+  límites son el área de trabajo del monitor del cursor (`MonitorFromPoint` +
+  `GetMonitorInfoW`).
+- **Pop**: escala 0,8 → 1,05 (al 60 %) → 1,0 en 160 ms, con senos. Se
+  reescala el polígono y el tamaño de la fuente.
+- **Duración**: `4 + 0,3 · palabras`, entre 5 y 10 s; `aviso_segundos > 0`
+  la fija.
+
+### Gesto de zigzag
+
+- `DetectorZigzag` recibe la posición **real** del cursor en cada fotograma, no
+  la de la burbuja, así que la inercia no le afecta.
+- Un cambio de sentido cuenta cuando el cursor retrocede ≥ 8 px desde el
+  extremo del tramo (histéresis: el temblor no parte un tramo en dos).
+- El tramo cerrado es válido si recorrió ≥ 40 px y su movimiento vertical
+  acumulado no pasa del 60 % del horizontal. Un tramo no válido vacía la
+  serie.
+- Tres cambios válidos en menos de 1 s cierran la burbuja. Todos los umbrales
+  son constantes `ZIGZAG_*` al principio del fichero, porque dependen de la
+  sensibilidad del ratón.
+- Probado con trazos sintéticos: zigzag rápido (sí), trazo largo de ida y
+  vuelta (no), temblor de 20 px (no), zigzag lento (no) y diagonal (no).
+
+### Saltos: preaviso, recta final y aparecer con cada salto
+
+- El salto se programa con `inicio = ahora + preaviso`. `_avanzar_salto` no
+  mueve nada hasta entonces. La meseta del pulso se alarga a
+  `preaviso + salto − ataque + 0,15` y, durante el preaviso, la intensidad se
+  multiplica por `respiracion()`, un coseno entre 0,65 y 1 con periodo de
+  0,9 s. Mientras hay salto en curso, la estela es 1,6 veces más larga.
+- Un destello que llega durante un salto en curso se ignora.
+- **Recta final**: `_saltos_activos()` exige no estar en los últimos
+  `recta_final_min`. Al entrar, si hay avance retenido, se lanza un último
+  destello (`final=True`). Con `_recta_final_iniciada` se sabe que, cuando
+  termine, hay que pasar a seguir al tiempo real. `_soltar_acumulado` mira
+  `_saltos_configurados()` (sin la recta final) para que ese último salto
+  pueda hacerse.
+- **Aparecer con cada salto**: todos los destellos pasan por
+  `_iniciar_destello()`. Con la barra oculta, llama a `asomar()` por
+  `2 s + preaviso + salto + caída`, marca `_destello_pendiente` y dispara el
+  destello 2 s después. Al acabar el forzado, el revelado esconde la barra sin
+  la espera de 5 s (`_venia_forzada`). El aviso de «saltos largos» está en el
+  diálogo y en las notas.
+
+### Burbuja desplazada y DPI
+
+- **Síntoma**: en un monitor 2K al 125 %, la burbuja de la barra apuntaba a
+  la izquierda de la punta, incluso con la barra quieta. No llegó a medirse si
+  el desfase era fijo o crecía a lo largo de la barra.
+- **Sospecha principal**: el escalado. Un proceso sin declarar DPI recibe
+  coordenadas virtualizadas y Windows estira sus ventanas como mapas de bits;
+  cualquier mezcla entre coordenadas físicas y lógicas descuadra posiciones.
+- **Arreglo, por tres lados**:
+  1. `activar_dpi_por_monitor()` antes de crear ventanas: primero
+     `SetProcessDpiAwarenessContext(-4)` (por monitor v2); si no,
+     `SetProcessDpiAwareness(2)`; y, como último recurso, `SetProcessDPIAware`.
+     Todo pasa a ser píxeles físicos. Tk escala las fuentes en puntos por su
+     cuenta; las medidas en píxeles (alto de barra, márgenes) no se escalan.
+  2. `punta_en_pantalla()` mide la barra con `GetWindowRect`, no con la
+     geometría que se le pidió, y escala la posición de la punta por
+     `ancho_real / ancho`.
+  3. En el modo barra, la burbuja vuelve a consultar la punta en cada
+     fotograma, así que sigue a la barra en directo, también durante un salto.
+- **Fallo encontrado por el camino**: la punta se calculaba con `round()`, que
+  en Python redondea al par (`round(376,5) = 376`, `round(383,5) = 384`). El
+  mismo píxel podía caer a un lado u otro según la posición. Ahora se usa
+  `floor()` sobre el centro del último píxel pintado.
+- **Registro de diagnóstico**: si existe `diagnostico.on` en la carpeta de
+  datos, cada burbuja añade una línea JSON a `diagnostico.log` con:
+  - modo DPI y DPI de la barra;
+  - barra pedida, rectángulo real y geometría según Tk;
+  - `px_borde` y `px_real`;
+  - punta calculada, cursor y punta de la colita;
+  - rectángulo de la burbuja.
+
+  Si el desfase sigue, ahí se verá en qué paso aparece.
+
+### Pruebas
+
+Arnés de Linux ampliado con `GetCursorPos`, `MonitorFromPoint`,
+`GetMonitorInfoW`, `GetWindowRect` y `GetDpiForWindow` simulados. Pruebas
+nuevas:
+- detector de zigzag con trazos sintéticos;
+- burbuja junto al cursor: zona muerta, persecución, vertical, colocación
+  debajo y cierre con una sacudida real en el bucle de Tk;
+- burbuja en la barra siguiendo a un rectángulo real desplazado 7 px;
+- preaviso: barra quieta y respirando, luego salto, luego apagado;
+- recta final;
+- aparecer con cada salto;
+- registro de diagnóstico.
+
+Las pruebas de la 2.0 siguen pasando, salvo la del clic en la burbuja, que se
+ha retirado porque esa función ya no existe.
+
+---
+
 ## 2.0.0 · 2026-11-18 — «Con brillo propio»
 
 Reescritura de casi todo lo visual y del diálogo. Sigue siendo un único
@@ -372,16 +490,18 @@ descansar no retrasaba la hora de salida. Modelo incorrecto para mi horario real
 
 ## Pendiente / ideas
 
+- Confirmar con `diagnostico.log` que la burbuja cuadra con escalados del
+  125 % y del 150 %, y con monitores de escalado distinto a la vez.
 - Menú contextual moderno del Explorador de Windows 11: es una ventana XAML de
   otra clase y puede quedar debajo de la barra. Hay que averiguar su clase en
   un equipo real y añadirla a `menu_contextual_abierto()`.
+- Afinar los umbrales del zigzag con ratones reales si cierra de más o de
+  menos.
 - Emojis a color dentro de las burbujas. Tk los pinta en monocromo; habría que
   rasterizar las líneas con emojis con Pillow, como en la celebración.
 - Color histórico por tramo: hoy, al cambiar un color se recolorean también
   los tramos pasados. Haría falta guardar el estilo dentro de cada tramo.
-- La barra desaparece con aplicaciones a pantalla completa real. Sin solución
-  limpia.
-- Varios monitores: la barra solo vive en el principal.
+- Varios monitores: la barra solo vive en el principal (las burbujas junto al
+  cursor ya salen en cualquiera).
 - Empaquetar con PyInstaller y meter acceso directo en `shell:startup`.
-- Detectar reuniones o vídeos (micrófono en uso, `SetThreadExecutionState` de
-  otra app) para no marcar descanso automático en falso.
+- Detectar reuniones o vídeos para no marcar descanso automático en falso.

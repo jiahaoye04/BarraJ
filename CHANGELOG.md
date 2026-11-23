@@ -16,6 +16,49 @@ Las decisiones técnicas, en [`docs/NOTAS_TECNICAS.md`](docs/NOTAS_TECNICAS.md).
 
 ---
 
+## [2.1.0] — 2026-11-19 · «Que no se te escape»
+
+[Notas de la versión completas →](docs/notas-de-version/2.1.0.md)
+
+### Añadido
+
+- **Avisos junto al cursor** (de serie). El cuerpo de la burbuja persigue al
+  puntero con inercia y una zona muerta, y la colita le apunta en tiempo real.
+  Va encima del puntero o, si no cabe, debajo, siempre dentro del monitor
+  donde esté el ratón. Opción para seguir mostrándolos en la punta de la barra.
+- **Cierre con una sacudida** del ratón (→ ← → ←).
+- **Entrada con «pop»**: la burbuja crece con un pequeño rebote al aparecer.
+- **Duración automática** de los avisos: 4 s + 0,3 s por palabra, entre 5 y
+  10 s. Opción de duración fija.
+- **Preaviso en el avance por saltos**: la cabeza blanca se enciende y respira
+  con la barra quieta antes de saltar. 2 s de serie, configurable de 0 a 5 s.
+- **Recta final**: los últimos 10 minutos (configurable; 0 = nunca) la barra
+  avanza de forma continua, tras un último salto que suelta lo acumulado.
+- **Visibilidad *Oculta + aparecer con cada salto***: la barra aparece 2 s
+  antes de cada salto y se esconde al terminar de apagarse.
+- **Registro de diagnóstico** opcional (`diagnostico.on` →
+  `diagnostico.log`) con las posiciones de barra, punta y burbuja.
+
+### Cambiado
+
+- ⚠️ Los avisos **ya no se cierran con un clic**: ningún clic se queda en
+  ellos; todos pasan a la ventana de debajo.
+- ⚠️ El programa se declara **compatible con DPI por monitor**. Con escalado,
+  todo se ve más nítido y la barra de 4 px son 4 píxeles reales, así que con
+  el 125 % se ve algo más fina.
+- El destello de un salto mantiene una estela más larga durante el preaviso y
+  el salto.
+
+### Corregido
+
+- La burbuja de la punta de la barra quedaba desplazada a la izquierda. Ahora
+  se mide con el rectángulo real de la ventana de la barra y sigue a la punta
+  en directo, también durante un salto.
+- La punta podía calcularse un píxel a un lado u otro según su posición, por
+  el redondeo al par de Python.
+
+---
+
 ## [2.0.0] — 2026-11-18 · «Con brillo propio»
 
 [Notas de la versión completas →](docs/notas-de-version/2.0.0.md)
@@ -148,6 +191,7 @@ Primera versión.
 - Tooltip con el tiempo restante.
 - Progreso del día guardado entre reinicios.
 
+[2.1.0]: https://github.com/jiahaoye04/BarraJ/releases/tag/v2.1.0
 [2.0.0]: https://github.com/jiahaoye04/BarraJ/releases/tag/v2.0.0
 [1.2.1]: https://github.com/jiahaoye04/BarraJ/commit/509f516
 [1.2.0]: https://github.com/jiahaoye04/BarraJ/commit/492de63
